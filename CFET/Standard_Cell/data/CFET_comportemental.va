@@ -1,0 +1,53 @@
+`include "constants.vams"
+`include "disciplines.vams"
+
+module cfet_device(d, g, s, b);
+    inout d, g, s, b;
+    electrical d, g, s, b;
+
+    // Déclaration explicite des paramètres modifiables depuis SPICE
+    parameter real type = 1;
+    parameter real vth = 0.2;
+    parameter real ion = 5e-5;
+    parameter real ioff = 1e-10;
+    parameter real ss = 65;
+
+    // Variables internes
+    real vgs, vds;
+    real ss_v, vt, n_factor;
+    real vgs_eff_sub, v_ov_eff, v_ov_vdd;
+    real I_sub, I_on_contrib, I_total;
+    real vdd_nom;
+    real sat_factor;
+
+    analog begin
+        vdd_nom = 0.7; // Tension nominale d'extraction TCAD
+        
+        // 1. Gestion des signes
+        vgs = type * V(g, s);
+        vds = type * V(d, s);
+
+        // 2. Constantes thermiques
+        vt = $vt; 
+        ss_v = ss / 1000.0;
+        n_factor = ss_v / (vt * 2.303); 
+
+        // 3. Modélisation de la fuite (Saturée à Vth)
+        // L'astuce mathématique ln(1+exp) est inversée ici pour saturer la tension effective à Vth
+        vgs_eff_sub = vth - n_factor * vt * ln(1 + exp((vth - vgs) / (n_factor * vt)));
+        I_sub = ioff * pow(10.0, (vgs_eff_sub / ss_v));
+
+        // 4. Modélisation du canal allumé (Normalisée à Vdd)
+        // On garantit mathématiquement que I_on_contrib vaut exactement "ion" quand vgs = vdd_nom
+        v_ov_eff = n_factor * vt * ln(1 + exp((vgs - vth) / (n_factor * vt)));
+        v_ov_vdd = n_factor * vt * ln(1 + exp((vdd_nom - vth) / (n_factor * vt)));
+        
+        I_on_contrib = ion * (v_ov_eff / v_ov_vdd);
+
+        sat_factor = vds / sqrt(0.05 + vds * vds);
+        I_total = (I_sub + I_on_contrib) * sat_factor;
+
+        // 6. Injection du courant dans la branche (Drain vers Source)
+        I(d, s) <+ type * I_total;
+    end
+endmodule
